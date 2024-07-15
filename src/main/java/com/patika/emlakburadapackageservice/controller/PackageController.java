@@ -1,6 +1,7 @@
 package com.patika.emlakburadapackageservice.controller;
 
 import com.patika.emlakburadapackageservice.dto.request.PurchasePackageRequest;
+import com.patika.emlakburadapackageservice.dto.response.GenericResponse;
 import com.patika.emlakburadapackageservice.service.AdPackageService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -20,4 +21,8 @@ public class PackageController {
         return new ResponseEntity<>(HttpStatus.CREATED);
     }
 
+    @GetMapping("{userId}/check-availability")
+    public GenericResponse<Boolean> checkPackageAvailability(@PathVariable Long userId) {
+        return GenericResponse.success(packageService.checkPublishingRights(userId));
+    }
 }
