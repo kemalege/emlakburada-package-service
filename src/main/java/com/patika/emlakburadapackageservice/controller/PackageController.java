@@ -25,4 +25,10 @@ public class PackageController {
     public GenericResponse<Boolean> checkPackageAvailability(@PathVariable Long userId) {
         return GenericResponse.success(packageService.checkPublishingRights(userId));
     }
+
+    @PostMapping("{userId}/update-rights")
+    public ResponseEntity<Void> updatePackageRights(@PathVariable Long userId) {
+        packageService.decrementPackageRights(userId);
+        return new ResponseEntity<>(HttpStatus.OK);
+    }
 }
