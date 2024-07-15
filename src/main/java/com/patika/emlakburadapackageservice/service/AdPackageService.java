@@ -6,6 +6,7 @@ import com.patika.emlakburadapackageservice.consumer.dto.NotificationDto;
 import com.patika.emlakburadapackageservice.converter.PackagePaymentRequestConverter;
 import com.patika.emlakburadapackageservice.converter.UserPackageConverter;
 import com.patika.emlakburadapackageservice.dto.request.PurchasePackageRequest;
+import com.patika.emlakburadapackageservice.dto.response.AdPackageAvailabilityResponse;
 import com.patika.emlakburadapackageservice.exception.EmlakBuradaException;
 import com.patika.emlakburadapackageservice.exception.ExceptionMessages;
 import com.patika.emlakburadapackageservice.model.AdPackage;
@@ -18,6 +19,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Optional;
 
 @RequiredArgsConstructor
@@ -45,24 +49,59 @@ public class AdPackageService {
 
     @RabbitListener(queues = "${notification.queue}")
     public void assignPackageToUser(NotificationDto notificationDto) {
-        log.info("Received payment details :{}", notificationDto.toString());
+        log.info("Received payment details: {}", notificationDto);
 
-        AdPackage adPackage = getById(notificationDto.getPackageId());
+        AdPackage adPackageToBuy = getById(notificationDto.getPackageId());
 
-        UserPackage userPackage = UserPackageConverter.convert(notificationDto, adPackage);
+        List<UserPackage> userPackages = userPackageRepository.findAllByUserId(notificationDto.getUserId());
 
-        userPackageRepository.save(userPackage);
+        if (userPackages.isEmpty()) {
+            UserPackage newUserPackage = UserPackageConverter.convert(notificationDto, adPackageToBuy);
+            userPackageRepository.save(newUserPackage);
+            log.info("New package assigned to user: {}", notificationDto.getUserId());
+        } else {
+            extendExistingPackage(userPackages, adPackageToBuy);
+            log.info("Existing package extended for user: {}", notificationDto.getUserId());
+        }
 
-        log.info("Package assigned to user: {}", notificationDto.getUserId());
+    }
 
+    private void extendExistingPackage(List<UserPackage> userPackages, AdPackage adPackageToBuy) {
+        UserPackage lastPackage = userPackages.stream()
+                .max(Comparator.comparing(UserPackage::getExpiryDate))
+                .orElseThrow(() -> new IllegalStateException("No packages found for user"));
+
+        lastPackage.setExpiryDate(lastPackage.getExpiryDate().plusDays(adPackageToBuy.getValidityDays()));
+        lastPackage.setRemainingCount(lastPackage.getRemainingCount() + adPackageToBuy.getAdCount());
+        userPackageRepository.save(lastPackage);
+    }
+
+    public Boolean checkPublishingRights(Long userId) {
+        List<UserPackage> userPackages = userPackageRepository.findAllByUserId(userId);
+
+        boolean expiryDateCheck = userPackages.stream()
+                .anyMatch(pkg -> pkg.getExpiryDate().isAfter(LocalDateTime.now()));
+
+        boolean adCountCheck = userPackages.stream()
+                .anyMatch(pkg -> pkg.getRemainingCount() > 0);
+
+        if (!expiryDateCheck && adCountCheck) {
+            throw new EmlakBuradaException(ExceptionMessages.PACKET_EXPIRED);
+        } else if (expiryDateCheck && !adCountCheck) {
+            throw new EmlakBuradaException(ExceptionMessages.INSUFFICIENT_AD_COUNT);
+        } else {
+            return expiryDateCheck;
+        }
     }
 
     public AdPackage getById(Long id) {
-        Optional<AdPackage> foundAd = adPackageRepository.findById(id);
-        if (foundAd.isEmpty()) {
+        Optional<AdPackage> foundAdPackage = adPackageRepository.findById(id);
+        if (foundAdPackage.isEmpty()) {
             log.error(ExceptionMessages.PACKET_NOT_FOUND);
             throw new EmlakBuradaException(ExceptionMessages.PACKET_NOT_FOUND);
         }
-        return foundAd.get();
+        return foundAdPackage.get();
     }
+
+
 }
