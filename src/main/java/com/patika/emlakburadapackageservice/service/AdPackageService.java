@@ -6,7 +6,6 @@ import com.patika.emlakburadapackageservice.consumer.dto.NotificationDto;
 import com.patika.emlakburadapackageservice.converter.PackagePaymentRequestConverter;
 import com.patika.emlakburadapackageservice.converter.UserPackageConverter;
 import com.patika.emlakburadapackageservice.dto.request.PurchasePackageRequest;
-import com.patika.emlakburadapackageservice.dto.response.AdPackageAvailabilityResponse;
 import com.patika.emlakburadapackageservice.exception.EmlakBuradaException;
 import com.patika.emlakburadapackageservice.exception.ExceptionMessages;
 import com.patika.emlakburadapackageservice.model.AdPackage;
@@ -86,12 +85,26 @@ public class AdPackageService {
                 .anyMatch(pkg -> pkg.getRemainingCount() > 0);
 
         if (!expiryDateCheck && adCountCheck) {
+//            return new AdPackageAvailabilityResponse(false, ExceptionMessages.PACKET_EXPIRED);
             throw new EmlakBuradaException(ExceptionMessages.PACKET_EXPIRED);
         } else if (expiryDateCheck && !adCountCheck) {
+//            return new AdPackageAvailabilityResponse(false, ExceptionMessages.INSUFFICIENT_AD_COUNT);
             throw new EmlakBuradaException(ExceptionMessages.INSUFFICIENT_AD_COUNT);
         } else {
             return expiryDateCheck;
         }
+    }
+
+    public void decrementPackageRights(Long userId) {
+        List<UserPackage> userPackages = userPackageRepository.findAllByUserId(userId);
+
+        userPackages.stream()
+                .filter(pkg -> pkg.getExpiryDate().isAfter(LocalDateTime.now()) && pkg.getRemainingCount() > 0)
+                .findFirst()
+                .ifPresent(pkg -> {
+                    pkg.setRemainingCount(pkg.getRemainingCount() - 1);
+                    userPackageRepository.save(pkg);
+                });
     }
 
     public AdPackage getById(Long id) {
