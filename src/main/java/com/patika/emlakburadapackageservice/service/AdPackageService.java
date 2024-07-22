@@ -5,6 +5,7 @@ import com.patika.emlakburadapackageservice.client.service.PaymentService;
 import com.patika.emlakburadapackageservice.consumer.dto.NotificationDto;
 import com.patika.emlakburadapackageservice.converter.PackagePaymentRequestConverter;
 import com.patika.emlakburadapackageservice.converter.UserPackageConverter;
+import com.patika.emlakburadapackageservice.dto.request.PackagePaymentRequest;
 import com.patika.emlakburadapackageservice.dto.request.PurchasePackageRequest;
 import com.patika.emlakburadapackageservice.exception.EmlakBuradaException;
 import com.patika.emlakburadapackageservice.exception.ExceptionMessages;
@@ -16,6 +17,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -29,8 +31,8 @@ import java.util.Optional;
 public class AdPackageService {
 
     private final PaymentService paymentService;
+    private final UserPackageService userPackageService;
     private final AdPackageRepository adPackageRepository;
-    private final UserPackageRepository userPackageRepository;
 
     public void redirectToPaymentService(PurchasePackageRequest request) {
 
@@ -38,7 +40,7 @@ public class AdPackageService {
 
         log.info("found adPackage: {}", adPackage.toString());
 
-        com.patika.emlakburadapackageservice.dto.request.PackagePaymentRequest packagePaymentRequest = PackagePaymentRequestConverter.convert(request, adPackage.getPrice());
+        PackagePaymentRequest packagePaymentRequest = PackagePaymentRequestConverter.convert(request, adPackage.getPrice());
 
         PaymentResponse paymentResponse = paymentService.purchasePackage(packagePaymentRequest);
 
@@ -52,11 +54,11 @@ public class AdPackageService {
 
         AdPackage adPackageToBuy = getById(notificationDto.getPackageId());
 
-        List<UserPackage> userPackages = userPackageRepository.findAllByUserId(notificationDto.getUserId());
+        List<UserPackage> userPackages = userPackageService.getPackagesById(notificationDto.getUserId());
 
         if (userPackages.isEmpty()) {
             UserPackage newUserPackage = UserPackageConverter.convert(notificationDto, adPackageToBuy);
-            userPackageRepository.save(newUserPackage);
+            userPackageService.save(newUserPackage);
             log.info("New package assigned to user: {}", notificationDto.getUserId());
         } else {
             extendExistingPackage(userPackages, adPackageToBuy);
@@ -65,18 +67,18 @@ public class AdPackageService {
 
     }
 
-    private void extendExistingPackage(List<UserPackage> userPackages, AdPackage adPackageToBuy) {
+    public void extendExistingPackage(List<UserPackage> userPackages, AdPackage adPackageToBuy) {
         UserPackage lastPackage = userPackages.stream()
                 .max(Comparator.comparing(UserPackage::getExpiryDate))
                 .orElseThrow(() -> new IllegalStateException("No packages found for user"));
 
         lastPackage.setExpiryDate(lastPackage.getExpiryDate().plusDays(adPackageToBuy.getValidityDays()));
         lastPackage.setRemainingCount(lastPackage.getRemainingCount() + adPackageToBuy.getAdCount());
-        userPackageRepository.save(lastPackage);
+        userPackageService.save(lastPackage);
     }
 
     public Boolean checkPublishingRights(Long userId) {
-        List<UserPackage> userPackages = userPackageRepository.findAllByUserId(userId);
+        List<UserPackage> userPackages = userPackageService.getPackagesById(userId);
 
         boolean expiryDateCheck = userPackages.stream()
                 .anyMatch(pkg -> pkg.getExpiryDate().isAfter(LocalDateTime.now()));
@@ -95,16 +97,10 @@ public class AdPackageService {
         }
     }
 
-    public void decrementPackageRights(Long userId) {
-        List<UserPackage> userPackages = userPackageRepository.findAllByUserId(userId);
-
-        userPackages.stream()
-                .filter(pkg -> pkg.getExpiryDate().isAfter(LocalDateTime.now()) && pkg.getRemainingCount() > 0)
-                .findFirst()
-                .ifPresent(pkg -> {
-                    pkg.setRemainingCount(pkg.getRemainingCount() - 1);
-                    userPackageRepository.save(pkg);
-                });
+    @Cacheable(value = "adpackage", cacheNames = "adpackage")
+    public List<AdPackage> getAll() {
+//        log.info("db'den getirildi");
+        return adPackageRepository.findAll();
     }
 
     public AdPackage getById(Long id) {
@@ -115,6 +111,5 @@ public class AdPackageService {
         }
         return foundAdPackage.get();
     }
-
 
 }
